@@ -194,7 +194,7 @@ exports.compileFiles = function(files){
 	
 	var class_ids_promise = getClassIds(getClassNames(files));
 
-	var container_promise = createContainer('test-container-35');
+	var container_promise = createContainer('test-container-36');
 
 	deferreds.push(class_ids_promise);
 	deferreds.push(container_promise);
