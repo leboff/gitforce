@@ -8,6 +8,7 @@
     "nforce-tooling": "0.0.4",
     "lodash": "2.4.x",
     "request": "2.42.x",
-    "q": "1.0.x"
+    "q": "1.0.x",
+    "node-uuid": "1.4.x"
   }
 }

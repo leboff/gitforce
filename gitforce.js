@@ -1,8 +1,9 @@
 var  q = require('q'),
   request = require('request'),
   nforce = require("nforce"),
+  tooling = require('nforce-tooling')(nforce),
   _ = require('lodash'),
-  tooling = require('nforce-tooling')(nforce);
+  uuid = require('node-uuid');
 
 _.templateSettings.interpolate = /{\/([\s\S]+?)}/g;
 
@@ -177,13 +178,7 @@ var checkDeploymentStatus = function(data){
 			console.log(data);
 		});
 
-
 	}, 2000);
-	
-
-	
-
-
 }
 
 
@@ -193,8 +188,7 @@ exports.compileFiles = function(files){
 	var deferreds = [];
 	
 	var class_ids_promise = getClassIds(getClassNames(files));
-
-	var container_promise = createContainer('test-container-36');
+	var container_promise = createContainer(uuid.v4());
 
 	deferreds.push(class_ids_promise);
 	deferreds.push(container_promise);
@@ -207,9 +201,10 @@ exports.compileFiles = function(files){
 		var artifact_deferreds = [];
 		_.forEach(files, function(file){
 			if(getFileType(file.name) === 'ApexClass'){
-				var file_name =  getClassName(getFileName(file.name));
-				var class_obj = _.find(class_names_ids, {name : getClassName(getFileName(file.name))});
-				var artifact = org.tooling.createDeployArtifact('ApexClassMember', {body: file.data, contentEntityId: class_obj.id});
+				var file_name =  getClassName(getFileName(file.name)),
+				class_obj = _.find(class_names_ids, {name : getClassName(getFileName(file.name))}),
+				artifact = org.tooling.createDeployArtifact('ApexClassMember', {body: file.data, contentEntityId: class_obj.id});
+
 				artifact_deferreds.push(addContainerArtifact(container_data.id, artifact));
 			}
 		});
