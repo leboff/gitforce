@@ -1,9 +1,9 @@
-var  q = require('q'),
-  request = require('request'),
-  nforce = require("nforce"),
+var nforce = require("nforce"),
   tooling = require('nforce-tooling')(nforce),
-  _ = require('lodash'),
-  uuid = require('node-uuid');
+  octokit = require('Octokit'),
+  request = require('request'),
+  q = require('q'),
+  _ = require('lodash');
 
 _.templateSettings.interpolate = /{\/([\s\S]+?)}/g;
 
@@ -12,6 +12,60 @@ var options = {
     'User-Agent' : 'SFDC-Webhook-Receiver'
   }
 };
+
+var org, gh;
+
+var req = function(url, params){
+	var deferred = q.defer();
+
+  	options.url = url;
+  	if(params){
+  		options.qs = params;
+  	}
+
+  	request.get(options, function(error, response, body){
+	    if (!error && response.statusCode === 200) {
+	      deferred.resolve(body);
+	    }
+	    else{
+	      deferred.reject(error);
+	    }
+  	});
+  	return deferred.promise;
+}
+
+
+module.exports = function(sfdcConfig, githubToken){
+	sfdcConfig.plugins = ['tooling'];
+	nforce.use(sfdcConfig);
+	gh = new Octokit({
+		token: githubToken;
+	});
+});
+
+exports.processPush = function(push){
+	var repo = gh.getRepo(push.repository.owner.name, push.repository.name);
+
+	//get the compare
+	req(push.compare)
+	.then(function(compare){
+		//get the blobs
+		var blobs = [];
+		_.each(compare.files, function(file){
+			blobs.push(req(file.blob_url));
+		});
+
+		q.all(blobs).then(function(data){
+			console.log(data);
+		});
+	});
+
+
+};
+
+
+
+/*
 
 var org = nforce.createConnection({
   clientId: '3MVG9xOCXq4ID1uGlTQYlYHi9pQpUGaR7Nff25tdrf8iRs5Rr26OTSNYdwWqTMq_BELP7biQ9NhGUkpVVCx5N',
@@ -241,3 +295,4 @@ exports.getCommitFiles = function(commits_url, commit){
   
   return commit_deferred.promise;
 };
+*/

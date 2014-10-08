@@ -1,14 +1,14 @@
 {
   "name": "gitforce",
   "description": "for pulling files from a git repo, and pushing them to an sfdc org",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "main": "gitforce.js",
   "dependencies": {
-    "nforce": "0.7.x",
+    "nforce": "leboff/nforce",
     "nforce-tooling": "0.0.4",
     "lodash": "2.4.x",
-    "request": "2.42.x",
+    "request": "2.45.x",
     "q": "1.0.x",
-    "node-uuid": "1.4.x"
+    "octokit": "0.10.x"
   }
 }
