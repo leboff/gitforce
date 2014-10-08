@@ -1,6 +1,6 @@
 var nforce = require("nforce"),
   tooling = require('nforce-tooling')(nforce),
-  octokit = require('Octokit'),
+  octokit = require('octokit'),
   request = require('request'),
   q = require('q'),
   _ = require('lodash');
@@ -15,9 +15,12 @@ var options = {
 
 var org, gh;
 
+var apiUrl = function(url){
+	return url.replace('github.com', 'api.github.com/repos');
+}
+
 var req = function(url, params){
 	var deferred = q.defer();
-
   	options.url = url;
   	if(params){
   		options.qs = params;
@@ -34,25 +37,45 @@ var req = function(url, params){
   	return deferred.promise;
 }
 
+var getBlob = function(file, blobs_url){
+	var deferred = q.defer();
 
-module.exports = function(sfdcConfig, githubToken){
+	options.url = _.template(blobs_url, {'sha': '/'+file.sha});
+
+	request.get(options, function(error, response, body){
+	    if (!error && response.statusCode === 200) {
+	    	file.blob = JSON.parse(body);
+	      	deferred.resolve(file);
+	    }
+	    else{
+	      deferred.reject(error);
+	    }
+  	});
+  	return deferred.promise;
+}
+
+
+exports.config = function(sfdcConfig, githubToken){
 	sfdcConfig.plugins = ['tooling'];
-	nforce.use(sfdcConfig);
-	gh = new Octokit({
-		token: githubToken;
+	sfdcConfig.apiVersion = 'v29.0'
+	org = nforce.createConnection(sfdcConfig);
+	gh = octokit.new({
+		token: githubToken
 	});
-});
+};
 
 exports.processPush = function(push){
 	var repo = gh.getRepo(push.repository.owner.name, push.repository.name);
-
+	
+	repo = push.repository;	
 	//get the compare
-	req(push.compare)
+	req(apiUrl(push.compare))
 	.then(function(compare){
-		//get the blobs
+		compare = JSON.parse(compare);
+		
 		var blobs = [];
-		_.each(compare.files, function(file){
-			blobs.push(req(file.blob_url));
+		_.each(cmp.files, function(file){
+			blobs.push(getBlob(file, repo.blobs_url));
 		});
 
 		q.all(blobs).then(function(data){
