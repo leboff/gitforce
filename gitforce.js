@@ -1,4 +1,7 @@
-var nforce = require("nforce"),
+/* exported tooling */
+'use strict';
+
+var nforce = require('nforce'),
   tooling = require('nforce-tooling')(nforce),
   octokit = require('octokit'),
   request = require('request'),
@@ -13,11 +16,19 @@ var options = {
   }
 };
 
-var org, gh;
+var pathToType = {
+	'classes':
+		{
+			name: 'ApexClass',
+			member: 'ApexClassMember'
+		}
+
+};
+var org, gh, token;
 
 var apiUrl = function(url){
 	return url.replace('github.com', 'api.github.com/repos');
-}
+};
 
 var req = function(url, params){
 	var deferred = q.defer();
@@ -25,23 +36,23 @@ var req = function(url, params){
   	if(params){
   		options.qs = params;
   	}
-
   	request.get(options, function(error, response, body){
 	    if (!error && response.statusCode === 200) {
 	      deferred.resolve(body);
 	    }
 	    else{
+	      console.log('error', response, url);
 	      deferred.reject(error);
 	    }
   	});
   	return deferred.promise;
-}
+};
 
 var getBlob = function(file, blobs_url){
 	var deferred = q.defer();
 
 	options.url = _.template(blobs_url, {'sha': '/'+file.sha});
-
+	options.qs = {access_token: token};
 	request.get(options, function(error, response, body){
 	    if (!error && response.statusCode === 200) {
 	    	file.blob = JSON.parse(body);
@@ -52,35 +63,151 @@ var getBlob = function(file, blobs_url){
 	    }
   	});
   	return deferred.promise;
-}
+};
+
+var getFileBlobs = function(compare, blobs_url){
+	var deferred = q.defer();
+	compare = JSON.parse(compare);
+		
+	var blobs = [];
+	_.each(compare.files, function(file){
+		blobs.push(getBlob(file, blobs_url));
+	});
+
+	q.all(blobs)
+	.then(function(data){
+		deferred.resolve(data);
+	})
+	.fail(function(err){
+		deferred.reject(err);
+	});
+	return deferred.promise;
+};
+
+var createContainer = function(){
+	var deferred = q.defer();
+	org.tooling.createContainer({name: 'webhook-container'}, function(err, resp){
+		if(!err){
+			deferred.resolve(resp.id);
+		}
+		else{
+			if(err.errorCode === 'DUPLICATE_VALUE'){
+				var patt = /id: ([a-zA-Z0-9]{15})/;
+				var res = patt.exec(err.messageBody);
+				console.log('duplicate container found, attempting to delete');
+				if(res[1]){
+					org.tooling.deleteContainer({id: res[1]}, function(err, resp){
+						if(!err){
+							createContainer().then(deferred.resolve);
+						}
+						else{
+							console.log(err);
+							deferred.reject(err);
+						}
+					});
+				}	
+			}
+			else{
+				console.log(err);
+				deferred.reject(err);
+			}
+		}
+	});
+
+	return deferred.promise;
+};
+var getFileType = function(filename){
+	var path = filename.split('/');
+
+	return pathToType[path[path.length-2]];
+};
+var getFileName = function(filename){
+	var path = filename.split('/');
+	var name = path[path.length-1].split('.');
+
+	return name[0];
+};
+var getFileIds = function(compare){
+	var deferreds = [];
+	//create the object
+	compare = JSON.parse(compare);
+	var filesByType = _.groupBy(compare.files, function(file){
+		console.log(file.filename);
+		return getFileType(file.filename).name;
+	});
+
+	_.each(filesByType, function(files, type){
+		_.each(files, function(file){
+			console.log(type, getFileName(file.filename));
+		});
+	});
+
+	return deferreds;
+};
+// var addFilesToContainer = function(container_id, files){
+// 	var deferred = q.defer();
+// 		// containerid = _.last(data),
+// 		// apexdata = _.initial(data),
+// 		// items = _.reduce(apexdata, function(memo, apex){
+// 		// 	return memo + apex.length;
+// 		// }, 0),
+// 		// members = [];
+ 
+// 	console.log('adding '+files.length+' apexes to container '+container_id);
 
 
-exports.config = function(sfdcConfig, githubToken){
+// 	// _.each(files, function(file){
+// 	// 	if(getFileType(file.filename)){
+// 	// 		var artifact = createArtifact(apex, containerid);
+// 	// 		org.tooling.addContainerArtifact({id: containerid, artifact: artifact}, function(err, resp){
+// 	// 			if(!err){
+// 	// 				members.push(resp.id);
+// 	// 		 		process.stdout.write('added '+members.length+' apexes to container\r');
+// 	// 		 		if(members.length === items){
+// 	// 		 			process.stdout.write('\n');
+// 	// 		 			deferred.resolve({members: members, id: containerid});
+// 	// 		 		}
+// 	// 		 	}
+// 	// 		 	else{
+// 	// 		 		process.stdout.write('\n');
+// 	// 		 		deferred.reject(err);
+// 	// 		 	}
+// 	// 		})
+// 	// 	}
+// 	// })
+
+// 	// return deferred.promise;
+
+// };
+
+exports.config = function(sfdcConfig, githubToken, sfdcOauth){
 	sfdcConfig.plugins = ['tooling'];
-	sfdcConfig.apiVersion = 'v29.0'
+	sfdcConfig.apiVersion = 'v29.0';
 	org = nforce.createConnection(sfdcConfig);
+	
+	org.authenticate(sfdcOauth, function(err, oauth){
+		console.log(oauth);
+	});
+
 	gh = octokit.new({
 		token: githubToken
 	});
+
+	token = githubToken;
 };
 
 exports.processPush = function(push){
+	console.log('and watch works 2');
 	var repo = gh.getRepo(push.repository.owner.name, push.repository.name);
 	
 	repo = push.repository;	
 	//get the compare
-	req(apiUrl(push.compare))
-	.then(function(compare){
-		compare = JSON.parse(compare);
-		
-		var blobs = [];
-		_.each(cmp.files, function(file){
-			blobs.push(getBlob(file, repo.blobs_url));
-		});
-
-		q.all(blobs).then(function(data){
-			console.log(data);
-		});
+	q.all([req(apiUrl(push.compare),{access_token: token}), createContainer()])
+	.then(function(data){
+		return q.all([getFileBlobs(data[0], repo.blobs_url), getFileIds(data[0])]);
+	})
+	.then(function(data){
+		//console.log(data);
 	});
 
 

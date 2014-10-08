@@ -4,7 +4,7 @@
   "version": "0.0.2",
   "main": "gitforce.js",
   "dependencies": {
-    "nforce": "0.7",
+    "nforce": "0.8.0-beta.6",
     "nforce-tooling": "0.0.4",
     "lodash": "2.4.x",
     "request": "2.45.x",
