@@ -20,7 +20,8 @@ var pathToType = {
 	'classes':
 		{
 			name: 'ApexClass',
-			member: 'ApexClassMember'
+			member: 'ApexClassMember',
+			ext: 'cls'
 		}
 
 };
@@ -59,19 +60,19 @@ var getBlob = function(file, blobs_url){
 	      	deferred.resolve(file);
 	    }
 	    else{
+	    	console.log(error);
 	      deferred.reject(error);
 	    }
   	});
   	return deferred.promise;
 };
 
-var getFileBlobs = function(compare, blobs_url){
+var getFileBlobs = function(compareFiles, blobs_url){
 	var deferred = q.defer();
-	compare = JSON.parse(compare);
-		
 	var blobs = [];
-	_.each(compare.files, function(file){
-		blobs.push(getBlob(file, blobs_url));
+	_.each(compareFiles, function(file){
+		if(getFileType(file.filename))
+			blobs.push(getBlob(file, blobs_url));
 	});
 
 	q.all(blobs)
@@ -94,21 +95,18 @@ var createContainer = function(){
 			if(err.errorCode === 'DUPLICATE_VALUE'){
 				var patt = /id: ([a-zA-Z0-9]{15})/;
 				var res = patt.exec(err.messageBody);
-				console.log('duplicate container found, attempting to delete');
 				if(res[1]){
 					org.tooling.deleteContainer({id: res[1]}, function(err, resp){
 						if(!err){
 							createContainer().then(deferred.resolve);
 						}
 						else{
-							console.log('Error', err);
 							deferred.reject(err);
 						}
 					});
 				}	
 			}
 			else{
-				console.log(err);
 				deferred.reject(err);
 			}
 		}
@@ -117,71 +115,110 @@ var createContainer = function(){
 	return deferred.promise;
 };
 var getFileType = function(filename){
-	var path = filename.split('/');
+	var path = filename.split('/'),
+		extension = filename.split('.'),
+		type = pathToType[path[path.length-2]];
 
-	return pathToType[path[path.length-2]];
+	if(_.last(extension) === type.ext){
+		return type;
+	}
+	
 };
 var getFileName = function(filename){
 	var path = filename.split('/');
-	var name = path[path.length-1].split('.');
-
+	var name = _.last(path).split('.');
 	return name[0];
 };
-var getFileIds = function(compare){
+var getFileIds = function(compareFiles){
 	var deferreds = [];
 	//create the object
-	compare = JSON.parse(compare);
-	var filesByType = _.groupBy(compare.files, function(file){
-		return getFileType(file.filename).name;
+
+	var filesByType = _.groupBy(compareFiles, function(file){
+		var type = getFileType(file.filename);
+		return type ? type.name : null;
 	});
 
-	_.each(filesByType, function(files, type){
-		var filenames = _.pluck(files, 'filename'),
-			querynames = _.map(filenames, getFileName).join('\',\''),
-			query = 'select id, name from '+type+' where name in (\''+querynames+'\')';
 
-		var deferred = q.defer();
-		console.log(query);
-		org.tooling.query({q: query}, function(err, resp){
-			if(!err){
-				deferred.resolve(resp.records);
-			}
-			else{
-				console.log(err);
-				deferred.reject(err);
-			}
-		});
-		deferreds.push(deferred.promise);
+	_.each(filesByType, function(files, type){
+		if(type !== 'null'){
+			var filenames = _.pluck(files, 'filename'),
+			querynames = _.map(filenames, getFileName).join('\',\''),
+			query = 'select id, name from '+type+' where name in (\''+querynames+'\')',
+			deferred = q.defer();
+
+			org.tooling.query({q: query}, function(err, resp){
+				if(!err){
+					deferred.resolve(resp.records);
+				}
+				else{
+					deferred.reject(err);
+				}
+			});
+			deferreds.push(deferred.promise);
+		}
+		
 	});
 
 	return deferreds;
 };
+
+var createFile = function(file){
+	var deferred = q.defer();
+
+
+	var sobj = nforce.createSObject(getFileType(file.filename).name);
+	sobj.set('Name', getFileName(file.filename));
+	sobj.set('Body', 'public class '+getFileName(file.filename)+'{}');
+
+
+	org.insert({sobject: sobj}, function(err, resp){
+		
+		if(err)deferred.reject(err);
+		if(!err)deferred.resolve(resp);
+	});
+
+	return deferred.promise;
+}
+
+var addFileToContainer = function(container_id, file){
+	var deferred = q.defer(),
+		body = new Buffer(file.blob.content, 'base64').toString('binary'),
+		type = getFileType(file.filename).member,
+		fact = {
+			body:body,
+			contentEntityId: file.sfdc_id,
+			metadataContainerId: container_id
+		},
+		artifact = org.tooling.createDeployArtifact(getFileType(file.filename).member,fact);
+
+	org.tooling.addContainerArtifact({id: container_id, artifact: artifact}, function(err, resp) {
+	  	if (err) deferred.reject(err);
+	  	if (!err) deferred.resolve(resp);
+	});
+
+	return deferred.promise;
+}
 var addFilesToContainer = function(container_id, files){
 	var deferreds = [];
 	_.each(files, function(file){
-		var body = new Buffer(file.blob.content, 'base64').toString('binary'),
-			type = getFileType(file.filename).member,
-			fact = { 
-				body:body,
-				contentEntityId: file.sfdc_id,
-				metadataContainerId: container_id
-			}
 
-		var artifact = org.tooling.createDeployArtifact(getFileType(file.filename).member,fact);
+		if(file.sfdc_id === null){
+			var createDeferred = q.defer();
+			createFile(file).then(function(result){
+				file.sfdc_id = result.id;
+				addFileToContainer(container_id, file).then(createDeferred.resolve);
+			});
+			deferreds.push(createDeferred.promise);
+		}
+		else{
+			deferreds.push(addFileToContainer(container_id, file));
+		}
 
-		var deferred = q.defer();
-		org.tooling.addContainerArtifact({id: container_id, artifact: artifact}, function(err, resp) {
-			console.log(err, resp);
-		  	if (err) deferred.reject(err);
-		  	if (!err) deferred.resolve(resp);
-		});
-		deferreds.push(deferred.promise);
 	});
 	return q.all(deferreds);
 }
 var deploy = function(container_id){
 	var deferred = q.defer();
-	console.log('deploying');
 	org.tooling.deployContainer({id: container_id, isCheckOnly: false}, function(err, resp){
 		if(err) deferred.reject(err);
 		if(!err) deferred.resolve(resp.id);
@@ -194,10 +231,8 @@ var getContainerStatus = function(deploy_id){
 		attempts = 1;
 
 	var interval = setInterval(function(){
-		console.log('checking container '+deploy_id+' status... attempt: '+attempts);
 		org.tooling.getContainerDeployStatus({id: deploy_id}, function(err, resp){
 			if(!err){
-				console.log(resp.State);
 				if(resp.State === 'Completed'){	
 					clear(interval, deferred.resolve, resp);
 				}
@@ -230,7 +265,6 @@ exports.config = function(sfdcConfig, githubToken, sfdcOauth){
 	org = nforce.createConnection(sfdcConfig);
 	
 	org.authenticate(sfdcOauth, function(err, oauth){
-		console.log(oauth);
 	});
 
 	gh = octokit.new({
@@ -241,17 +275,16 @@ exports.config = function(sfdcConfig, githubToken, sfdcOauth){
 };
 
 exports.processPush = function(push){
-	console.log('and watch works 2');
 	var repo = gh.getRepo(push.repository.owner.name, push.repository.name);
 	
 	repo = push.repository;	
 	//get the compare
 	q.all([req(apiUrl(push.compare),{access_token: token}), createContainer()])
 	.spread(function(compare, container_id){
-		q.all([getFileBlobs(compare, repo.blobs_url)].concat(getFileIds(compare)))
+		compare = JSON.parse(compare);
+		q.all([getFileBlobs(compare.files, repo.blobs_url)].concat(getFileIds(compare.files)))
 		.spread(function(files, fileIds){
 			//map ids to files
-			console.log(files, fileIds);
 			_.each(files, function(file){
 				if(fileIds && fileIds.length > 0){
 					var fileId = _.find(fileIds, {'Name' : getFileName(file.filename)});
@@ -274,8 +307,6 @@ exports.processPush = function(push){
 		})
 		.then(console.log);
 	})
-	.fail(function(){
-		console.log(err);
-	});
+	.fail(console.log);
 
 };
