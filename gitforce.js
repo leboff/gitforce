@@ -101,7 +101,7 @@ var createContainer = function(){
 							createContainer().then(deferred.resolve);
 						}
 						else{
-							console.log(err);
+							console.log('Error', err);
 							deferred.reject(err);
 						}
 					});
@@ -132,53 +132,97 @@ var getFileIds = function(compare){
 	//create the object
 	compare = JSON.parse(compare);
 	var filesByType = _.groupBy(compare.files, function(file){
-		console.log(file.filename);
 		return getFileType(file.filename).name;
 	});
 
 	_.each(filesByType, function(files, type){
-		_.each(files, function(file){
-			console.log(type, getFileName(file.filename));
+		var filenames = _.pluck(files, 'filename'),
+			querynames = _.map(filenames, getFileName).join('\',\''),
+			query = 'select id, name from '+type+' where name in (\''+querynames+'\')';
+
+		var deferred = q.defer();
+		console.log(query);
+		org.tooling.query({q: query}, function(err, resp){
+			if(!err){
+				deferred.resolve(resp.records);
+			}
+			else{
+				console.log(err);
+				deferred.reject(err);
+			}
 		});
+		deferreds.push(deferred.promise);
 	});
 
 	return deferreds;
 };
-// var addFilesToContainer = function(container_id, files){
-// 	var deferred = q.defer();
-// 		// containerid = _.last(data),
-// 		// apexdata = _.initial(data),
-// 		// items = _.reduce(apexdata, function(memo, apex){
-// 		// 	return memo + apex.length;
-// 		// }, 0),
-// 		// members = [];
- 
-// 	console.log('adding '+files.length+' apexes to container '+container_id);
+var addFilesToContainer = function(container_id, files){
+	var deferreds = [];
+	_.each(files, function(file){
+		var body = new Buffer(file.blob.content, 'base64').toString('binary'),
+			type = getFileType(file.filename).member,
+			fact = { 
+				body:body,
+				contentEntityId: file.sfdc_id,
+				metadataContainerId: container_id
+			}
 
+		var artifact = org.tooling.createDeployArtifact(getFileType(file.filename).member,fact);
 
-// 	// _.each(files, function(file){
-// 	// 	if(getFileType(file.filename)){
-// 	// 		var artifact = createArtifact(apex, containerid);
-// 	// 		org.tooling.addContainerArtifact({id: containerid, artifact: artifact}, function(err, resp){
-// 	// 			if(!err){
-// 	// 				members.push(resp.id);
-// 	// 		 		process.stdout.write('added '+members.length+' apexes to container\r');
-// 	// 		 		if(members.length === items){
-// 	// 		 			process.stdout.write('\n');
-// 	// 		 			deferred.resolve({members: members, id: containerid});
-// 	// 		 		}
-// 	// 		 	}
-// 	// 		 	else{
-// 	// 		 		process.stdout.write('\n');
-// 	// 		 		deferred.reject(err);
-// 	// 		 	}
-// 	// 		})
-// 	// 	}
-// 	// })
+		var deferred = q.defer();
+		org.tooling.addContainerArtifact({id: container_id, artifact: artifact}, function(err, resp) {
+			console.log(err, resp);
+		  	if (err) deferred.reject(err);
+		  	if (!err) deferred.resolve(resp);
+		});
+		deferreds.push(deferred.promise);
+	});
+	return q.all(deferreds);
+}
+var deploy = function(container_id){
+	var deferred = q.defer();
+	console.log('deploying');
+	org.tooling.deployContainer({id: container_id, isCheckOnly: false}, function(err, resp){
+		if(err) deferred.reject(err);
+		if(!err) deferred.resolve(resp.id);
+	});
 
-// 	// return deferred.promise;
+ 	return deferred.promise;
+}
+var getContainerStatus = function(deploy_id){
+	var deferred = q.defer(),
+		attempts = 1;
 
-// };
+	var interval = setInterval(function(){
+		console.log('checking container '+deploy_id+' status... attempt: '+attempts);
+		org.tooling.getContainerDeployStatus({id: deploy_id}, function(err, resp){
+			if(!err){
+				console.log(resp.State);
+				if(resp.State === 'Completed'){	
+					clear(interval, deferred.resolve, resp);
+				}
+				else if(resp.State === 'Queued'){
+				}
+				else{
+					clear(interval, deferred.reject, resp);
+				}
+			}
+			else{
+				clear(interval, deferred.reject, err);
+			}
+		});
+		attempts++;
+	}, 5000)
+	
+	var clear = function(interval, func, data){
+		attempts = 0;
+		clearInterval(interval);
+		func(data);
+	}
+
+	return deferred.promise;
+}
+
 
 exports.config = function(sfdcConfig, githubToken, sfdcOauth){
 	sfdcConfig.plugins = ['tooling'];
@@ -203,13 +247,36 @@ exports.processPush = function(push){
 	repo = push.repository;	
 	//get the compare
 	q.all([req(apiUrl(push.compare),{access_token: token}), createContainer()])
-	.then(function(data){
-		return q.all([getFileBlobs(data[0], repo.blobs_url), getFileIds(data[0])]);
+	.spread(function(compare, container_id){
+		q.all([getFileBlobs(compare, repo.blobs_url)].concat(getFileIds(compare)))
+		.spread(function(files, fileIds){
+			//map ids to files
+			console.log(files, fileIds);
+			_.each(files, function(file){
+				if(fileIds && fileIds.length > 0){
+					var fileId = _.find(fileIds, {'Name' : getFileName(file.filename)});
+					if(fileId){
+						file.sfdc_id = fileId.Id;
+					}
+					else{
+						file.sfdc_id = null;
+					}
+				}
+				else{
+					file.sfdc_id = null;
+				}
+			})
+			
+			return addFilesToContainer(container_id, files);
+		})
+		.then(function(){
+			return deploy(container_id).then(getContainerStatus);
+		})
+		.then(console.log);
 	})
-	.then(function(data){
-		//console.log(data);
+	.fail(function(){
+		console.log(err);
 	});
-
 
 };
 
