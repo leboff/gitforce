@@ -32,13 +32,19 @@ function GitForce(sfdcConfig, githubToken){
 		};
 
 
-	var apiUrl = function(url){
-		return url.replace('github.com', 'api.github.com/repos');
+	var apiUrl = function(repo, head_commit, last_commit){
+		if(last_commit){
+			return repo.compare_url.replace('{base}', last_commit).replace('{head}', head_commit);
+		}
+		else{
+			return repo.commits_url.replace('{/sha}', head_commit);
+		}
+		
 	};
 
-	var getCompare = function(url){
+	var getCompare = function(repo, head_commit, last_commit){
 		var deferred = q.defer();
-	  	options.url = apiUrl(url);
+	  	options.url = apiUrl(repo, head_commit, last_commit);
 		options.qs = {access_token: github_token};
 		console.log(options);
 	  	request.get(options, function(error, response, body){
@@ -46,7 +52,7 @@ function GitForce(sfdcConfig, githubToken){
 		      deferred.resolve(JSON.parse(body));
 		    }
 		    else{
-		      console.log('error', response, url);
+		      console.log('error', response, options.url);
 		      deferred.reject(error);
 		    }
 	  	});
@@ -261,11 +267,11 @@ function GitForce(sfdcConfig, githubToken){
 
 		return deferred.promise;
 	}
-	this.processPush = function(push){
+	this.processPush = function(push, last_commit){
 		var deferred = q.deferred();
 		var repo = push.repository;	
 		//get the compare
-		q.all([getCompare(push.compare), createContainer()])
+		q.all([getCompare(repo, push.head_commit.id, last_commit), createContainer()])
 		.spread(function(compare, container_id){
 			q.all([getFileBlobs(compare.files, repo.blobs_url)].concat(getFileIds(compare.files)))
 			.spread(function(files, fileIds){
