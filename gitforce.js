@@ -3,7 +3,6 @@
 
 var nforce = require('nforce'),
   tooling = require('nforce-tooling')(nforce),
-  octokit = require('octokit'),
   request = require('request'),
   q = require('q'),
   _ = require('lodash');
@@ -14,29 +13,23 @@ _.templateSettings.interpolate = /{\/([\s\S]+?)}/g;
 
 
 function GitForce(sfdcConfig, githubToken){
-	sfdcConfig.config.plugins = ['tooling'];
+	sfdcConfig.plugins = ['tooling'];
 
-	var org = nforce.createConnection(sfdcConfig.config);
-	org.authenticate(sfdcConfig.oauth, function(err, oauth){
-	});
-
-	var github_token = githubToken;
-
-	var options = {
-	  headers :  {
-	    'User-Agent' : 'SFDC-Webhook-Receiver'
-	  }
-	};
-
-	var pathToType = {
-		'classes':
-			{
-				name: 'ApexClass',
-				member: 'ApexClassMember',
-				ext: 'cls'
-			}
-
-	};
+	var org = nforce.createConnection(sfdcConfig),
+		github_token = githubToken,
+		options = {
+		  headers :  {
+		    'User-Agent' : 'SFDC-Webhook-Receiver'
+		  }
+		},
+		pathToType = {
+			'classes':
+				{
+					name: 'ApexClass',
+					member: 'ApexClassMember',
+					ext: 'cls'
+				}
+		};
 
 
 	var apiUrl = function(url){
@@ -47,6 +40,7 @@ function GitForce(sfdcConfig, githubToken){
 		var deferred = q.defer();
 	  	options.url = apiUrl(url);
 		options.qs = {access_token: github_token};
+		console.log(options);
 	  	request.get(options, function(error, response, body){
 		    if (!error && response.statusCode === 200) {
 		      deferred.resolve(JSON.parse(body));
