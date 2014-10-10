@@ -147,14 +147,12 @@ function GitForce(sfdcConfig, githubToken){
 			return type ? type.name : null;
 		});
 
-
 		_.each(filesByType, function(files, type){
 			if(type !== 'null'){
 				var filenames = _.pluck(files, 'filename'),
 				querynames = _.map(filenames, getFileName).join('\',\''),
 				query = 'select id, name from '+type+' where name in (\''+querynames+'\')',
 				deferred = q.defer();
-
 				org.tooling.query({q: query}, function(err, resp){
 					if(!err){
 						deferred.resolve(resp.records);
@@ -242,6 +240,7 @@ function GitForce(sfdcConfig, githubToken){
 		var interval = setInterval(function(){
 			org.tooling.getContainerDeployStatus({id: deploy_id}, function(err, resp){
 				if(!err){
+					console.log(resp.State);
 					if(resp.State === 'Completed'){	
 						clear(interval, deferred.resolve, resp);
 					}
@@ -266,9 +265,10 @@ function GitForce(sfdcConfig, githubToken){
 
 		return deferred.promise;
 	}
-	this.processPush = function(push, last_commit){
-		var deferred = q.defer();
-		var repo = push.repository;	
+	this.processPush = function(push, configuration){
+		var deferred = q.defer(),
+			repo = push.repository,
+			last_commit = configuration.last_commit;
 		//get the compare
 		q.all([getCompare(repo, push.head_commit.id, last_commit), createContainer()])
 		.spread(function(compare, container_id){
@@ -293,11 +293,13 @@ function GitForce(sfdcConfig, githubToken){
 				return addFilesToContainer(container_id, files);
 			})
 			.then(function(){
-				return deploy(container_id).then(getContainerStatus);
+				deploy(container_id)
+				.then(getContainerStatus)
+				.then(function(){
+					configuration.last_commit = push.head_commit.id;
+					deferred.resolve(configuration);
+				});
 			})
-			.then(function(){
-				deferred.resolve(repo.head_commit.id);
-			});
 		})
 		.fail(deferred.reject);
 
