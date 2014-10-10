@@ -37,7 +37,7 @@ function GitForce(sfdcConfig, githubToken){
 			return repo.compare_url.replace('{base}', last_commit).replace('{head}', head_commit);
 		}
 		else{
-			return repo.commits_url.replace('{/sha}', head_commit);
+			return repo.commits_url.replace('{/sha}', '/'+head_commit);
 		}
 		
 	};
