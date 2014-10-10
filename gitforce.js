@@ -262,6 +262,7 @@ function GitForce(sfdcConfig, githubToken){
 		return deferred.promise;
 	}
 	this.processPush = function(push){
+		var deferred = q.deferred();
 		var repo = push.repository;	
 		//get the compare
 		q.all([getCompare(push.compare), createContainer()])
@@ -289,9 +290,11 @@ function GitForce(sfdcConfig, githubToken){
 			.then(function(){
 				return deploy(container_id).then(getContainerStatus);
 			})
-			.then(console.log);
+			.then(deferred.resolve);
 		})
-		.fail(console.log);
+		.fail(deferred.reject);
+
+		return deferred.promise;
 	};
 
 }
