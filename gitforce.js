@@ -46,7 +46,6 @@ function GitForce(sfdcConfig, githubToken){
 		var deferred = q.defer();
 	  	options.url = apiUrl(repo, head_commit, last_commit);
 		options.qs = {access_token: github_token};
-		console.log(options);
 	  	request.get(options, function(error, response, body){
 		    if (!error && response.statusCode === 200) {
 		      deferred.resolve(JSON.parse(body));
@@ -268,7 +267,7 @@ function GitForce(sfdcConfig, githubToken){
 		return deferred.promise;
 	}
 	this.processPush = function(push, last_commit){
-		var deferred = q.deferred();
+		var deferred = q.defer();
 		var repo = push.repository;	
 		//get the compare
 		q.all([getCompare(repo, push.head_commit.id, last_commit), createContainer()])
@@ -296,7 +295,9 @@ function GitForce(sfdcConfig, githubToken){
 			.then(function(){
 				return deploy(container_id).then(getContainerStatus);
 			})
-			.then(deferred.resolve);
+			.then(function(){
+				deferred.resolve(repo.head_commit.id);
+			});
 		})
 		.fail(deferred.reject);
 
